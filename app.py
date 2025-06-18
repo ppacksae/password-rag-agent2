@@ -417,9 +417,48 @@ def process_documents(uploaded_files):
     
     return all_chunks
 
+def load_default_document():
+    """기본 문서 자동 로드"""
+    default_file_path = "pstorm_pw.docx"
+    
+    if os.path.exists(default_file_path) and not st.session_state.documents:
+        try:
+            with open(default_file_path, 'rb') as f:
+                text = extract_text_from_docx(f)
+            
+            if text.strip():
+                # 오버랩이 있는 청킹
+                chunks = rag_system.chunk_text_with_overlap(
+                    text, 
+                    chunk_size=500, 
+                    overlap=50
+                )
+                
+                st.session_state.documents = chunks
+                
+                # 임베딩 모델 로드
+                embedding_model = rag_system.load_embedding_model()
+                
+                # 벡터 임베딩 생성
+                embeddings = embedding_model.encode(chunks)
+                st.session_state.embeddings = embeddings
+                
+                # TF-IDF 행렬 생성
+                st.session_state.tfidf_matrix = rag_system.vectorizer.fit_transform(chunks)
+                
+                return True
+        except Exception as e:
+            st.error(f"기본 문서 로드 오류: {e}")
+    
+    return False
+
 def main():
     # 다크 테마 적용
     apply_dark_theme()
+    
+    # 기본 문서 자동 로드
+    if load_default_document():
+        st.success("📄 기본 문서 (pstorm_pw.docx)가 자동으로 로드되었습니다!")
     
     # 헤더
     st.markdown("""
