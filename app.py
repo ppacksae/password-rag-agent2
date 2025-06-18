@@ -1,124 +1,133 @@
 import streamlit as st
-import google.generativeai as genai
-import PyPDF2
-from docx import Document
-import io
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
-import pandas as pd
-import requests
-import tempfile
 import os
-import re
-from typing import List, Tuple, Dict
+import tempfile
+import requests
 import json
+import pandas as pd
+import numpy as np
+from typing import List, Dict, Any, Tuple
+import time
+import hashlib
+from datetime import datetime
+import re
 
-# Streamlit 페이지 설정
+# 필수 라이브러리들
+try:
+    import google.generativeai as genai
+    from PyPDF2 import PdfReader
+    from docx import Document
+    from sentence_transformers import SentenceTransformer
+    from sklearn.metrics.pairwise import cosine_similarity
+    import pandas as pd
+    import numpy as np
+    LIBS_AVAILABLE = True
+except ImportError as e:
+    st.error(f"라이브러리 설치 필요: {e}")
+    LIBS_AVAILABLE = False
+
+# 페이지 설정 (다크모드 강화)
 st.set_page_config(
-    page_title="Advanced RAG Assistant v2",
-    page_icon="🤖",
+    page_title="AHN'S Advanced RAG Assistant",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 다크모드 CSS 스타일링 (Luxia-ON 스타일)
-def apply_dark_theme():
-    st.markdown("""
-    <style>
-    /* 전체 배경 */
+# 다크모드 CSS (Streamlit Cloud 호환)
+st.markdown("""
+<style>
     .stApp {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
         color: #ffffff;
     }
     
-    /* 메인 컨테이너 */
-    .main-container {
-        background: rgba(0, 0, 0, 0.7);
-        border-radius: 20px;
-        padding: 30px;
-        margin: 20px;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    /* 헤더 스타일 */
-    .header-container {
-        text-align: center;
-        margin-bottom: 30px;
-    }
-    
-    .app-title {
-        font-size: 2.5rem;
-        font-weight: bold;
-        background: linear-gradient(45deg, #00d4ff, #ff6b6b);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 10px;
-    }
-    
-    .app-subtitle {
-        color: #a0a0a0;
-        font-size: 1.1rem;
-        margin-bottom: 20px;
-    }
-    
-    /* 채팅 컨테이너 */
-    .chat-container {
-        background: rgba(30, 30, 30, 0.9);
+    .main-header {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
         border-radius: 15px;
-        padding: 20px;
-        margin: 10px 0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        min-height: 400px;
-        max-height: 600px;
-        overflow-y: auto;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
     }
     
-    /* 메시지 스타일 */
+    .main-title {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #ffffff;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        margin: 0;
+    }
+    
+    .main-subtitle {
+        font-size: 1.2em;
+        color: #e0e0e0;
+        margin-top: 0.5rem;
+    }
+    
+    .chat-container {
+        background: rgba(255,255,255,0.05);
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    
     .user-message {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 15px 20px;
-        border-radius: 20px 20px 5px 20px;
-        margin: 10px 0;
-        margin-left: 20%;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        padding: 1rem;
+        border-radius: 15px;
+        margin: 0.5rem 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
     
-    .bot-message {
-        background: rgba(50, 50, 50, 0.9);
+    .assistant-message {
+        background: rgba(255,255,255,0.1);
         color: #ffffff;
-        padding: 15px 20px;
-        border-radius: 20px 20px 20px 5px;
-        margin: 10px 0;
-        margin-right: 20%;
-        border-left: 4px solid #00d4ff;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        padding: 1rem;
+        border-radius: 15px;
+        margin: 0.5rem 0;
+        border-left: 4px solid #667eea;
     }
     
-    /* 입력 영역 */
-    .input-container {
-        background: rgba(30, 30, 30, 0.8);
-        border-radius: 25px;
-        padding: 10px;
-        margin: 20px 0;
-        border: 2px solid rgba(0, 212, 255, 0.3);
+    .status-box {
+        background: rgba(102, 126, 234, 0.2);
+        border: 1px solid #667eea;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
     }
     
-    /* 사이드바 */
-    .css-1d391kg {
-        background: rgba(20, 20, 20, 0.9);
+    .metric-card {
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        padding: 1rem;
+        text-align: center;
+        margin: 0.5rem;
+        border: 1px solid rgba(255,255,255,0.2);
     }
     
-    /* 버튼 스타일 */
+    /* Streamlit 컴포넌트 스타일링 */
+    .stTextInput > div > div > input {
+        background-color: rgba(255,255,255,0.1);
+        color: #ffffff;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 10px;
+    }
+    
+    .stSelectbox > div > div > select {
+        background-color: rgba(255,255,255,0.1);
+        color: #ffffff;
+        border: 1px solid rgba(255,255,255,0.3);
+    }
+    
     .stButton > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border: none;
-        border-radius: 25px;
-        padding: 12px 30px;
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
         font-weight: bold;
         transition: all 0.3s ease;
     }
@@ -128,83 +137,59 @@ def apply_dark_theme():
         box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
     }
     
-    /* 선택박스 */
-    .stSelectbox > div > div {
-        background: rgba(50, 50, 50, 0.8);
-        color: white;
-        border-radius: 10px;
+    /* 사이드바 스타일링 */
+    .css-1d391kg, .css-1lcbmhc {
+        background-color: rgba(30, 30, 46, 0.95);
     }
     
-    /* 파일 업로더 */
-    .stFileUploader > div {
-        background: rgba(50, 50, 50, 0.8);
-        border-radius: 15px;
-        border: 2px dashed rgba(0, 212, 255, 0.5);
+    .sidebar-content {
+        color: #ffffff;
     }
-    
-    /* 메트릭 카드 */
-    .metric-card {
-        background: rgba(50, 50, 50, 0.8);
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #00d4ff;
-    }
-    
-    /* 스크롤바 */
-    ::-webkit-scrollbar {
-        width: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-    }
-    
-    /* 숨겨야 할 요소들 */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
-# 전역 변수
-if 'conversation' not in st.session_state:
-    st.session_state.conversation = []
-if 'documents' not in st.session_state:
-    st.session_state.documents = []
-if 'embeddings' not in st.session_state:
-    st.session_state.embeddings = []
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'vectorizer' not in st.session_state:
-    st.session_state.vectorizer = None
-if 'tfidf_matrix' not in st.session_state:
-    st.session_state.tfidf_matrix = None
+# 메인 헤더
+st.markdown("""
+<div class="main-header">
+    <h1 class="main-title">🛡️ AHN'S Advanced RAG Assistant</h1>
+    <p class="main-subtitle">지능형 문서 분석 및 질의응답 시스템</p>
+</div>
+""", unsafe_allow_html=True)
 
 class AdvancedRAGSystem:
     def __init__(self):
-        self.embedding_model = None
-        self.vectorizer = TfidfVectorizer(
-            max_features=10000,
-            ngram_range=(1, 2),
-            stop_words=None
-        )
+        """고급 RAG 시스템 (SentenceTransformers + numpy)"""
+        self.documents = []
+        self.chunks = []
         
-    def load_embedding_model(self):
-        """임베딩 모델 로드"""
-        if self.embedding_model is None:
-            with st.spinner("🔄 임베딩 모델 로딩 중..."):
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        return self.embedding_model
+        # SentenceTransformer 모델 로드
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # 임베딩 저장용
+        self.embeddings = []
+        self.is_fitted = False
+        
+    def add_document(self, content: str, metadata: dict = None):
+        """문서 추가"""
+        doc_id = len(self.documents)
+        self.documents.append({
+            'id': doc_id,
+            'content': content,
+            'metadata': metadata or {}
+        })
+        
+        # 청킹
+        chunks = self.chunk_text(content, chunk_size=500, overlap=100)
+        for i, chunk in enumerate(chunks):
+            self.chunks.append({
+                'doc_id': doc_id,
+                'chunk_id': f"{doc_id}_{i}",
+                'content': chunk,
+                'metadata': metadata or {}
+            })
     
-    def chunk_text_with_overlap(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-        """오버랩이 있는 텍스트 청킹"""
+    def chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
+        """텍스트를 청크로 분할"""
         if len(text) <= chunk_size:
             return [text]
         
@@ -216,176 +201,100 @@ class AdvancedRAGSystem:
             
             # 문장 경계에서 자르기
             if end < len(text):
-                # 마지막 문장 끝을 찾기
-                last_period = text.rfind('.', start, end)
-                last_exclamation = text.rfind('!', start, end)
-                last_question = text.rfind('?', start, end)
-                
-                sentence_end = max(last_period, last_exclamation, last_question)
-                
-                if sentence_end > start:
-                    end = sentence_end + 1
+                while end > start and text[end] not in '.!?\n':
+                    end -= 1
+                if end == start:
+                    end = start + chunk_size
             
             chunk = text[start:end].strip()
             if chunk:
                 chunks.append(chunk)
             
-            # 오버랩 고려한 다음 시작점
-            start = end - overlap if end < len(text) else len(text)
-            
+            start = end - overlap
             if start >= len(text):
                 break
                 
         return chunks
     
-    def hybrid_search(self, query: str, documents: List[str], embeddings: np.ndarray, 
-                     top_k: int = 5, alpha: float = 0.7) -> List[Tuple[str, float]]:
-        """하이브리드 검색 (벡터 + 키워드)"""
-        if not documents:
-            return []
-        
-        # 벡터 검색
-        query_embedding = self.embedding_model.encode([query])
-        vector_similarities = cosine_similarity(query_embedding, embeddings)[0]
-        
-        # 키워드 검색 (TF-IDF)
+    def fit_vectors(self):
+        """벡터화 수행 (저번 성공 방식)"""
+        if not self.chunks:
+            return False
+            
         try:
-            query_tfidf = self.vectorizer.transform([query])
-            keyword_similarities = cosine_similarity(query_tfidf, st.session_state.tfidf_matrix)[0]
-        except:
-            keyword_similarities = np.zeros(len(documents))
-        
-        # 하이브리드 점수 계산
-        hybrid_scores = alpha * vector_similarities + (1 - alpha) * keyword_similarities
-        
-        # 상위 문서 선택
-        top_indices = np.argsort(hybrid_scores)[::-1][:top_k]
-        
-        results = []
-        for idx in top_indices:
-            if hybrid_scores[idx] > 0:
-                results.append((documents[idx], hybrid_scores[idx]))
-        
-        return results
+            chunk_texts = [chunk['content'] for chunk in self.chunks]
+            
+            # SentenceTransformer로 임베딩 생성
+            self.embeddings = self.embedding_model.encode(chunk_texts)
+            
+            self.is_fitted = True
+            return True
+        except Exception as e:
+            st.error(f"벡터화 오류: {e}")
+            return False
     
-    def rerank_documents(self, query: str, documents: List[Tuple[str, float]], 
-                        max_docs: int = 3) -> List[str]:
-        """Re-ranking with query relevance"""
-        if not documents:
+    def hybrid_search(self, query: str, top_k: int = 3, alpha: float = 0.7) -> List[Dict]:
+        """검색 수행 (저번 성공 방식)"""
+        if not self.is_fitted or not self.chunks:
             return []
         
-        # 간단한 키워드 기반 re-ranking
-        query_terms = set(query.lower().split())
-        
-        reranked = []
-        for doc, score in documents:
-            doc_terms = set(doc.lower().split())
-            overlap = len(query_terms.intersection(doc_terms))
+        try:
+            # 쿼리 임베딩
+            query_embedding = self.embedding_model.encode([query])
             
-            # 키워드 오버랩과 기존 점수 결합
-            final_score = score + (overlap * 0.1)
-            reranked.append((doc, final_score))
-        
-        # 최종 점수로 정렬
-        reranked.sort(key=lambda x: x[1], reverse=True)
-        
-        return [doc for doc, _ in reranked[:max_docs]]
-
-# RAG 시스템 초기화
-rag_system = AdvancedRAGSystem()
-
-def setup_luxia_api(api_key: str):
-    """Luxia API 설정"""
-    return api_key
-
-def setup_gemini_api(api_key: str):
-    """Gemini API 설정"""
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-pro')
-
-def generate_luxia_response(prompt: str, context: str, api_key: str) -> str:
-    """Luxia API 호출"""
-    try:
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        }
-        
-        if context:
-            full_prompt = f"""문서 내용을 참고하여 질문에 답변해주세요.
-
-문서 내용:
-{context}
-
-질문: {prompt}
-
-답변:"""
-        else:
-            full_prompt = prompt
-        
-        data = {
-            'model': 'luxia-2.5',
-            'messages': [
-                {'role': 'user', 'content': full_prompt}
-            ],
-            'max_tokens': 1000,
-            'temperature': 0.7
-        }
-        
-        # Luxia API 엔드포인트 (실제 API 명세에 따라 수정 필요)
-        response = requests.post(
-            'https://api.saltlux.com/v1/chat/completions',
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content']
-        else:
-            return f"❌ Luxia API 오류: {response.status_code} - {response.text}"
+            # 코사인 유사도 계산
+            similarities = cosine_similarity(query_embedding, self.embeddings).flatten()
             
-    except Exception as e:
-        return f"❌ Luxia API 연결 오류: {str(e)}"
+            # 상위 결과 선택
+            top_indices = np.argsort(similarities)[::-1][:top_k]
+            
+            results = []
+            for idx in top_indices:
+                if similarities[idx] > 0.1:  # 최소 유사도 임계값
+                    results.append({
+                        'chunk': self.chunks[idx],
+                        'score': float(similarities[idx]),
+                        'content': self.chunks[idx]['content']
+                    })
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"검색 오류: {e}")
+            return [])[::-1][:top_k]
+            
+            results = []
+            for idx in top_indices:
+                if similarities[idx] > 0.1:  # 최소 유사도 임계값
+                    results.append({
+                        'chunk': self.chunks[idx],
+                        'score': float(similarities[idx]),
+                        'content': self.chunks[idx]['content']
+                    })
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"검색 오류: {e}")
+            return []
 
-def generate_gemini_response(prompt: str, context: str, model) -> str:
-    """Gemini API 호출"""
-    try:
-        if context:
-            full_prompt = f"""문서 내용을 참고하여 질문에 답변해주세요.
-
-문서 내용:
-{context}
-
-질문: {prompt}
-
-답변:"""
-        else:
-            full_prompt = prompt
-        
-        response = model.generate_content(full_prompt)
-        return response.text
-        
-    except Exception as e:
-        return f"❌ Gemini API 오류: {str(e)}"
-
-def extract_text_from_pdf(pdf_file):
+# 파일 처리 함수들
+def extract_text_from_pdf(file) -> str:
     """PDF에서 텍스트 추출"""
     try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        reader = PdfReader(file)
         text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
         return text
     except Exception as e:
         st.error(f"PDF 처리 오류: {e}")
         return ""
 
-def extract_text_from_docx(docx_file):
+def extract_text_from_docx(file) -> str:
     """DOCX에서 텍스트 추출"""
     try:
-        doc = Document(docx_file)
+        doc = Document(file)
         text = ""
         for paragraph in doc.paragraphs:
             text += paragraph.text + "\n"
@@ -394,263 +303,342 @@ def extract_text_from_docx(docx_file):
         st.error(f"DOCX 처리 오류: {e}")
         return ""
 
-def process_documents(uploaded_files):
-    """업로드된 문서들 처리"""
-    all_chunks = []
-    
-    for uploaded_file in uploaded_files:
-        if uploaded_file.type == "application/pdf":
-            text = extract_text_from_pdf(uploaded_file)
-        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            text = extract_text_from_docx(uploaded_file)
-        else:
-            text = str(uploaded_file.read(), "utf-8")
-        
-        if text.strip():
-            # 오버랩이 있는 청킹
-            chunks = rag_system.chunk_text_with_overlap(
-                text, 
-                chunk_size=500, 
-                overlap=50
-            )
-            all_chunks.extend(chunks)
-    
-    return all_chunks
+def extract_text_from_txt(file) -> str:
+    """TXT 파일에서 텍스트 추출"""
+    try:
+        text = file.read().decode('utf-8')
+        return text
+    except Exception as e:
+        st.error(f"TXT 처리 오류: {e}")
+        return ""
 
+# Luxia API 설정
+LUXIA_API_KEY = "U2FsdGVkX19ZW0c+KOFb9zDy5eoyiz+I6icUKb2uOjuvUnzY1TaixWa5Ouy0s87vCdtqiQMmScIWcRbEJWcfXt/jS6RMWCW+38TU47bpj82JdafHt3ODi9VHfPmSrZJCMTwP4BJ471NZTqTLakFLpMQ/PTjafRebBJpfLSDeyBj4fX1VM+NnoH8u8aGG5AV4"
+
+def get_luxia_response(prompt: str, context: str = "") -> str:
+    """Luxia API 호출"""
+    try:
+        url = "https://api.luxia.one/api/luxia-chatbot-msg"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0"
+        }
+        
+        full_prompt = f"{context}\n\n사용자 질문: {prompt}" if context else prompt
+        
+        payload = {
+            "message": full_prompt,
+            "key": LUXIA_API_KEY
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('message', '응답을 받을 수 없습니다.')
+        else:
+            return f"API 오류 (상태 코드: {response.status_code})"
+            
+    except Exception as e:
+        return f"API 호출 오류: {str(e)}"
+
+def get_gemini_response(prompt: str, context: str = "") -> str:
+    """Gemini API 호출 (백업)"""
+    try:
+        genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
+        model = genai.GenerativeModel('gemini-pro')
+        
+        full_prompt = f"다음 문서를 참고하여 질문에 답해주세요:\n\n{context}\n\n질문: {prompt}"
+        
+        response = model.generate_content(full_prompt)
+        return response.text
+        
+    except Exception as e:
+        return f"Gemini API 오류: {str(e)}"
+
+# 자동 문서 로드 함수
 def load_default_document():
     """기본 문서 자동 로드"""
-    default_file_path = "pstorm_pw.docx"
-    
-    if os.path.exists(default_file_path) and not st.session_state.documents:
+    # 실제 파일이 있는지 확인
+    if os.path.exists("pstorm_pw.docx"):
         try:
-            with open(default_file_path, 'rb') as f:
-                text = extract_text_from_docx(f)
-            
-            if text.strip():
-                # 오버랩이 있는 청킹
-                chunks = rag_system.chunk_text_with_overlap(
-                    text, 
-                    chunk_size=500, 
-                    overlap=50
-                )
-                
-                st.session_state.documents = chunks
-                
-                # 임베딩 모델 로드
-                embedding_model = rag_system.load_embedding_model()
-                
-                # 벡터 임베딩 생성
-                embeddings = embedding_model.encode(chunks)
-                st.session_state.embeddings = embeddings
-                
-                # TF-IDF 행렬 생성
-                st.session_state.tfidf_matrix = rag_system.vectorizer.fit_transform(chunks)
-                
-                return True
+            with open("pstorm_pw.docx", "rb") as f:
+                content = extract_text_from_docx(f)
+                if content.strip():
+                    return content, "pstorm_pw.docx"
         except Exception as e:
-            st.error(f"기본 문서 로드 오류: {e}")
+            st.warning(f"기본 문서 로드 실패: {e}")
     
-    return False
+    # 하드코딩된 샘플 문서
+    return """
+# 회사 보안 정책 및 비밀번호 관리 가이드
 
+## 1. 비밀번호 정책
+- 최소 8자 이상, 영문 대소문자, 숫자, 특수문자 포함
+- 90일마다 변경 필수
+- 이전 5개 비밀번호 재사용 금지
+- 개인정보 포함 금지 (생년월일, 이름 등)
+
+## 2. 시스템 접근 보안
+- 업무용 계정과 개인 계정 분리 사용
+- 공용 컴퓨터에서 자동 로그인 설정 금지
+- 업무 종료 시 반드시 화면 잠금
+- USB 등 외부 저장매체 사용 시 보안 승인 필요
+
+## 3. VPN 및 원격 접속
+- 재택근무 시 회사 승인 VPN만 사용
+- 공용 Wi-Fi에서 업무 시스템 접속 금지
+- VPN 연결 시 개인용 프로그램 동시 사용 제한
+
+## 4. 데이터 보호
+- 회사 기밀 정보 개인 저장소 보관 금지
+- 클라우드 서비스 이용 시 IT팀 승인 필요
+- 정기 백업 수행 및 복구 테스트 실시
+
+## 5. 보안 사고 대응
+- 보안 사고 발견 시 즉시 IT보안팀 신고 (내선: 1588)
+- 의심스러운 메일 수신 시 첨부파일 실행 금지
+- 개인정보 유출 의심 시 개인정보보호팀 연락 (내선: 1577)
+
+## 6. 교육 및 점검
+- 분기별 보안 교육 이수 의무
+- 월 1회 보안 점검 실시
+- 보안 위반 시 경고 조치 및 재교육
+
+## 연락처
+- IT보안팀: 1588
+- 개인정보보호팀: 1577
+- 총무팀: 1500
+""", "기본_보안정책.txt"
+
+# 세션 상태 초기화
+def initialize_session_state():
+    """세션 상태 초기화"""
+    if 'rag_system' not in st.session_state:
+        st.session_state.rag_system = AdvancedRAGSystem()
+        
+        # 기본 문서 자동 로드
+        default_content, filename = load_default_document()
+        st.session_state.rag_system.add_document(
+            default_content, 
+            {'filename': filename, 'upload_time': datetime.now()}
+        )
+        st.session_state.rag_system.fit_vectors()
+        
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'processed_files' not in st.session_state:
+        st.session_state.processed_files = []
+
+# 메인 함수
 def main():
-    # 다크 테마 적용
-    apply_dark_theme()
+    if not LIBS_AVAILABLE:
+        st.error("필수 라이브러리가 설치되지 않았습니다. requirements.txt를 확인해주세요.")
+        return
     
-    # 기본 문서 자동 로드
-    if load_default_document():
-        st.success("📄 기본 문서 (pstorm_pw.docx)가 자동으로 로드되었습니다!")
-    
-    # 헤더
-    st.markdown("""
-    <div class="header-container">
-        <div class="app-title">🤖 Advanced RAG Assistant v2</div>
-        <div class="app-subtitle">Luxia & Gemini 기반 지능형 문서 분석 시스템</div>
-    </div>
-    """, unsafe_allow_html=True)
+    initialize_session_state()
     
     # 사이드바 설정
     with st.sidebar:
+        st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
+        
         st.markdown("### ⚙️ 설정")
         
         # AI 모델 선택
         ai_model = st.selectbox(
-            "🤖 AI 모델 선택",
+            "🧠 AI 모델 선택",
             ["Luxia", "Gemini"],
-            index=0,  # 기본값: Luxia
-            help="사용할 AI 모델을 선택하세요"
+            index=0,
+            help="응답 생성에 사용할 AI 모델을 선택하세요"
         )
         
-        # API 키 입력
-        if ai_model == "Luxia":
-            api_key = st.text_input(
-                "🔑 Luxia API 키",
-                value="U2FsdGVkX19ZW0c+KOFb9zDy5eoyiz+I6icUKb2uOjuvUnzY1TaixWa5Ouy0s87vCdtqiQMmScIWcRbEJWcfXt/jS6RMWCW+38TU47bpj82JdafHt3ODi9VHfPmSrZJCMTwP4BJ471NZTqTLakFLpMQ/PTjafRebBJpfLSDeyBj4fX1VM+NnoH8u8aGG5AV4",
-                type="password"
-            )
-        else:
-            api_key = st.text_input(
-                "🔑 Gemini API 키",
-                type="password"
-            )
+        # API 키 설정
+        st.markdown("### 🔑 Luxia API 키")
+        luxia_key_display = "•" * 20 + LUXIA_API_KEY[-10:] if len(LUXIA_API_KEY) > 10 else "•" * 10
+        st.text_input("API 키", value=luxia_key_display, disabled=True, type="password")
         
-        st.markdown("---")
-        
-        # 검색 설정
         st.markdown("### 🔍 검색 설정")
         
-        search_k = st.slider(
+        # 검색 문서 수
+        retrieval_count = st.slider(
             "검색할 문서 수",
             min_value=1,
             max_value=10,
             value=5,
-            help="유사한 문서를 몇 개까지 검색할지 설정"
+            help="검색 시 참고할 문서 청크 개수"
         )
         
+        # 하이브리드 검색 가중치
         alpha = st.slider(
             "하이브리드 검색 가중치",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.7,
-            step=0.1,
-            help="벡터 검색(1.0) vs 키워드 검색(0.0)"
+            min_value=0.00,
+            max_value=1.00,
+            value=0.70,
+            step=0.05,
+            help="의미적 검색과 키워드 검색의 비율 조정"
         )
         
-        st.markdown("---")
-        
-        # 문서 업로드
         st.markdown("### 📄 문서 업로드")
+        
+        # 파일 업로드
         uploaded_files = st.file_uploader(
             "문서를 업로드하세요",
             type=['pdf', 'docx', 'txt'],
             accept_multiple_files=True,
-            help="PDF, DOCX, TXT 파일을 지원합니다"
+            help="PDF, DOCX, TXT 파일을 업로드할 수 있습니다"
         )
         
+        # 파일 처리
         if uploaded_files:
-            if st.button("📊 문서 처리", type="primary"):
-                with st.spinner("🔄 문서 처리 중..."):
-                    # 문서 처리
-                    chunks = process_documents(uploaded_files)
-                    st.session_state.documents = chunks
-                    
-                    if chunks:
-                        # 임베딩 모델 로드
-                        embedding_model = rag_system.load_embedding_model()
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name not in [f['name'] for f in st.session_state.processed_files]:
+                    with st.spinner(f'{uploaded_file.name} 처리 중...'):
+                        content = ""
                         
-                        # 벡터 임베딩 생성
-                        embeddings = embedding_model.encode(chunks)
-                        st.session_state.embeddings = embeddings
+                        if uploaded_file.type == "application/pdf":
+                            content = extract_text_from_pdf(uploaded_file)
+                        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                            content = extract_text_from_docx(uploaded_file)
+                        elif uploaded_file.type == "text/plain":
+                            content = extract_text_from_txt(uploaded_file)
                         
-                        # TF-IDF 행렬 생성
-                        st.session_state.tfidf_matrix = rag_system.vectorizer.fit_transform(chunks)
-                        
-                        st.success(f"✅ {len(chunks)}개 청크로 문서 처리 완료!")
-                        
-                        # 문서 통계
-                        st.markdown("### 📊 문서 통계")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("총 청크 수", len(chunks))
-                        with col2:
-                            avg_length = sum(len(chunk) for chunk in chunks) // len(chunks)
-                            st.metric("평균 청크 길이", f"{avg_length}자")
-    
-    # 메인 컨텐츠
-    if not api_key:
-        st.warning("⚠️ API 키를 입력해주세요.")
-        return
-    
-    # API 설정
-    if ai_model == "Luxia":
-        model = setup_luxia_api(api_key)
-    else:
-        model = setup_gemini_api(api_key)
-        st.session_state.model = model
-    
-    # 채팅 인터페이스
-    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-    
-    # 대화 기록 표시
-    for i, (role, message) in enumerate(st.session_state.conversation):
-        if role == "user":
-            st.markdown(f'<div class="user-message">👤 {message}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="bot-message">🤖 {message}</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # 입력 영역
-    st.markdown('<div class="input-container">', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        user_input = st.text_input(
-            "",
-            placeholder="질문을 입력하세요...",
-            key="user_input",
-            label_visibility="collapsed"
-        )
-    
-    with col2:
-        send_button = st.button("전송", type="primary", use_container_width=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # 메시지 처리
-    if send_button and user_input:
-        # 사용자 메시지 추가
-        st.session_state.conversation.append(("user", user_input))
+                        if content.strip():
+                            st.session_state.rag_system.add_document(
+                                content,
+                                {
+                                    'filename': uploaded_file.name,
+                                    'upload_time': datetime.now(),
+                                    'size': len(content)
+                                }
+                            )
+                            st.session_state.rag_system.fit_vectors()
+                            st.session_state.processed_files.append({
+                                'name': uploaded_file.name,
+                                'size': len(content),
+                                'time': datetime.now()
+                            })
+                            st.success(f'{uploaded_file.name} 처리 완료!')
         
-        # 문서 검색
-        context = ""
-        if st.session_state.documents and st.session_state.embeddings is not None:
-            with st.spinner("🔍 관련 문서 검색 중..."):
-                # 하이브리드 검색
-                search_results = rag_system.hybrid_search(
-                    user_input,
-                    st.session_state.documents,
-                    st.session_state.embeddings,
-                    top_k=search_k,
-                    alpha=alpha
-                )
-                
-                # Re-ranking
-                relevant_docs = rag_system.rerank_documents(user_input, search_results, max_docs=3)
-                context = "\n\n".join(relevant_docs)
+        # 시스템 상태
+        st.markdown("### 📊 시스템 상태")
         
-        # AI 응답 생성
-        with st.spinner(f"🤖 {ai_model} 응답 생성 중..."):
-            if ai_model == "Luxia":
-                response = generate_luxia_response(user_input, context, api_key)
-            else:
-                response = generate_gemini_response(user_input, context, st.session_state.model)
+        # 상태 정보
+        total_docs = len(st.session_state.rag_system.documents)
+        total_chunks = len(st.session_state.rag_system.chunks)
         
-        # 봇 응답 추가
-        st.session_state.conversation.append(("bot", response))
-        
-        # 페이지 새로고침
-        st.rerun()
-    
-    # 하단 정보
-    if st.session_state.documents:
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-        
+        col1, col2 = st.columns(2)
         with col1:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("📚 로드된 문서", f"{len(st.session_state.documents)}개 청크")
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div style="font-size: 1.5em;">📚</div>
+                <div style="font-size: 1.2em; font-weight: bold;">{total_docs}</div>
+                <div style="font-size: 0.9em;">로드된 문서</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col2:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("🤖 사용 중인 모델", ai_model)
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div style="font-size: 1.5em;">🔍</div>
+                <div style="font-size: 1.2em; font-weight: bold;">{total_chunks}</div>
+                <div style="font-size: 0.9em;">청크</div>
+            </div>
+            """, unsafe_allow_html=True)
         
-        with col3:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("💬 대화 수", len(st.session_state.conversation) // 2)
-            st.markdown('</div>', unsafe_allow_html=True)
+        # 사용 중인 모델 정보
+        st.markdown(f"""
+        <div class="status-box">
+            <strong>🧠 사용 중인 모델:</strong><br>
+            {ai_model}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # 메인 콘텐츠 영역
+    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+    
+    # 질문 입력
+    user_input = st.text_input(
+        "질문을 입력하세요",
+        placeholder="예: 비밀번호 정책이 무엇인가요?",
+        key="user_question"
+    )
+    
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        ask_button = st.button("🔍 질문", type="primary", use_container_width=True)
+    
+    if ask_button and user_input:
+        with st.spinner('답변 생성 중...'):
+            # 검색 수행
+            search_results = st.session_state.rag_system.hybrid_search(
+                user_input,
+                top_k=retrieval_count,
+                alpha=alpha
+            )
+            
+            # 컨텍스트 구성
+            context = ""
+            if search_results:
+                context = "관련 문서 내용:\n\n"
+                for i, result in enumerate(search_results, 1):
+                    context += f"[문서 {i}]\n{result['content']}\n\n"
+            
+            # AI 응답 생성
+            if ai_model == "Luxia":
+                response = get_luxia_response(user_input, context)
+            else:
+                response = get_gemini_response(user_input, context)
+            
+            # 채팅 기록에 추가
+            st.session_state.chat_history.append({
+                'user': user_input,
+                'assistant': response,
+                'timestamp': datetime.now(),
+                'search_results': search_results
+            })
+    
+    # 채팅 기록 표시
+    for chat in reversed(st.session_state.chat_history):
+        st.markdown(f"""
+        <div class="user-message">
+            <strong>👤 질문:</strong> {chat['user']}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="assistant-message">
+            <strong>🤖 답변:</strong><br>
+            {chat['assistant']}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 검색 결과 표시
+        if chat.get('search_results'):
+            with st.expander(f"📋 참고 문서 ({len(chat['search_results'])}개)"):
+                for i, result in enumerate(chat['search_results'], 1):
+                    st.markdown(f"""
+                    **문서 {i}** (유사도: {result['score']:.3f})
+                    
+                    {result['content'][:300]}...
+                    """)
+        
+        st.markdown("---")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # 처리된 파일 목록
+    if st.session_state.processed_files:
+        st.markdown("### 📁 업로드된 파일")
+        for file_info in st.session_state.processed_files:
+            st.markdown(f"""
+            <div class="status-box">
+                📄 **{file_info['name']}**<br>
+                크기: {file_info['size']:,} 글자 | 
+                업로드: {file_info['time'].strftime('%Y-%m-%d %H:%M')}
+            </div>
+            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
