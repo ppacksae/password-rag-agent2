@@ -338,15 +338,17 @@ def get_luxia_response(prompt: str, context: str = "") -> str:
         else:
             full_prompt = prompt
 
-        # Luxia 공식 API 형식
+        # Luxia 공식 API 형식 - 단순화된 형식 시도
         payload = {
-            "model": "luxia2.5-llm-32b-0401",  # 공식 모델명
+            "model": "luxia2.5-llm-32b-0401",
             "messages": [
                 {
                     "role": "user",
                     "content": full_prompt
                 }
-            ]
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.7
         }
         
         st.info("🚀 Luxia API 연결 중...")
@@ -358,28 +360,45 @@ def get_luxia_response(prompt: str, context: str = "") -> str:
             timeout=30
         )
         
+        # 응답 상세 로그 (디버깅용)
+        st.info(f"응답 상태: {response.status_code}")
+        if response.status_code != 200:
+            st.error(f"응답 내용: {response.text}")
+        
         if response.status_code == 200:
             result = response.json()
+            st.success("✅ 원본 응답 받음!")
+            st.json(result)  # 디버깅: 전체 응답 확인
             
             # Luxia API 응답 처리
             if 'choices' in result and len(result['choices']) > 0:
-                message_content = result['choices'][0].get('message', {}).get('content', '')
-                if message_content:
+                choice = result['choices'][0]
+                if 'message' in choice and 'content' in choice['message']:
+                    message_content = choice['message']['content']
+                    if message_content:
+                        st.success("✅ Luxia API 연결 성공!")
+                        return message_content
+                elif 'text' in choice:
                     st.success("✅ Luxia API 연결 성공!")
-                    return message_content
+                    return choice['text']
             
-            # 대체 응답 형식 처리
+            # 다른 가능한 응답 형식들
+            elif 'data' in result:
+                st.success("✅ Luxia API 연결 성공!")
+                return result['data']
+            elif 'content' in result:
+                st.success("✅ Luxia API 연결 성공!")
+                return result['content']
             elif 'message' in result:
                 st.success("✅ Luxia API 연결 성공!")
                 return result['message']
-            
             elif 'response' in result:
                 st.success("✅ Luxia API 연결 성공!")
                 return result['response']
             
             else:
-                st.error(f"예상치 못한 응답 형식: {result}")
-                return "API 응답 형식을 인식할 수 없습니다."
+                st.error(f"알 수 없는 응답 형식입니다. 전체 응답을 확인해주세요.")
+                return f"응답을 받았지만 형식을 인식할 수 없습니다: {result}"
         
         elif response.status_code == 401:
             st.error("🔑 API 키 인증 실패 - platform.luxiacloud.com에서 키를 확인해주세요")
