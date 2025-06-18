@@ -158,16 +158,27 @@ st.markdown("""
 
 class AdvancedRAGSystem:
     def __init__(self):
-        """고급 RAG 시스템 (SentenceTransformers + numpy)"""
+        """고급 RAG 시스템 (안전한 초기화)"""
         self.documents = []
         self.chunks = []
-        
-        # SentenceTransformer 모델 로드
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        
-        # 임베딩 저장용
         self.embeddings = []
         self.is_fitted = False
+        self.embedding_model = None
+        
+        # SentenceTransformer 모델 안전하게 로드
+        try:
+            with st.spinner('🤖 AI 모델 로딩 중...'):
+                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            st.success('✅ AI 모델 로드 완료!')
+        except Exception as e:
+            st.error(f"❌ SentenceTransformer 로드 실패: {e}")
+            st.info("💡 TF-IDF 백업 모드로 전환합니다.")
+            # TF-IDF 백업 모드
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, ngram_range=(1, 2))
+            self.use_tfidf_backup = True
+        else:
+            self.use_tfidf_backup = False
         
     def add_document(self, content: str, metadata: dict = None):
         """문서 추가"""
@@ -217,15 +228,19 @@ class AdvancedRAGSystem:
         return chunks
     
     def fit_vectors(self):
-        """벡터화 수행 (저번 성공 방식)"""
+        """벡터화 수행 (안전한 처리)"""
         if not self.chunks:
             return False
             
         try:
             chunk_texts = [chunk['content'] for chunk in self.chunks]
             
-            # SentenceTransformer로 임베딩 생성
-            self.embeddings = self.embedding_model.encode(chunk_texts)
+            if not self.use_tfidf_backup and self.embedding_model is not None:
+                # SentenceTransformer 사용
+                self.embeddings = self.embedding_model.encode(chunk_texts)
+            else:
+                # TF-IDF 백업 모드
+                self.embeddings = self.tfidf_vectorizer.fit_transform(chunk_texts)
             
             self.is_fitted = True
             return True
@@ -234,16 +249,19 @@ class AdvancedRAGSystem:
             return False
     
     def hybrid_search(self, query: str, top_k: int = 3, alpha: float = 0.7) -> List[Dict]:
-        """검색 수행 (저번 성공 방식)"""
+        """검색 수행 (안전한 처리)"""
         if not self.is_fitted or not self.chunks:
             return []
         
         try:
-            # 쿼리 임베딩
-            query_embedding = self.embedding_model.encode([query])
-            
-            # 코사인 유사도 계산
-            similarities = cosine_similarity(query_embedding, self.embeddings).flatten()
+            if not self.use_tfidf_backup and self.embedding_model is not None:
+                # SentenceTransformer 사용
+                query_embedding = self.embedding_model.encode([query])
+                similarities = cosine_similarity(query_embedding, self.embeddings).flatten()
+            else:
+                # TF-IDF 백업 모드
+                query_vector = self.tfidf_vectorizer.transform([query])
+                similarities = cosine_similarity(query_vector, self.embeddings).flatten()
             
             # 상위 결과 선택
             top_indices = np.argsort(similarities)[::-1][:top_k]
