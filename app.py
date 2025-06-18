@@ -310,24 +310,18 @@ Gmail 계정 정보를 찾고 계시는군요.
 # Luxia API 설정
 LUXIA_API_KEY = "U2FsdGVkX19ZW0c+KOFb9zDy5eoyiz+I6icUKb2uOjuvUnzY1TaixWa5Ouy0s87vCdtqiQMmScIWcRbEJWcfXt/jS6RMWCW+38TU47bpj82JdafHt3ODi9VHfPmSrZJCMTwP4BJ471NZTqTLakFLpMQ/PTjafRebBJpfLSDeyBj4fX1VM+NnoH8u8aGG5AV4"
 
-# Luxia API 설정 - platform.luxiacloud.com 정확한 엔드포인트
-LUXIA_API_KEY = "U2FsdGVkX19ZW0c+KOFb9zDy5eoyiz+I6icUKb2uOjuvUnzY1TaixWa5Ouy0s87vCdtqiQMmScIWcRbEJWcfXt/jS6RMWCW+38TU47bpj82JdafHt3ODi9VHfPmSrZJCMTwP4BJ471NZTqTLakFLpMQ/PTjafRebBJpfLSDeyBj4fX1VM+NnoH8u8aGG5AV4"
+# Luxia API 설정 - 실제 API 키 사용
+LUXIA_API_KEY = "lZTqTLakFLpMQ/PTjafRebBJpfLSDeyBj4fXiVM+NnoH8u8aGG5AV4"
 
 def get_luxia_response(prompt: str, context: str = "") -> str:
-    """Luxia API를 통한 답변 생성 - platform.luxiacloud.com 정확한 엔드포인트"""
+    """Luxia API를 통한 답변 생성 - 정확한 공식 엔드포인트 사용"""
     try:
-        # platform.luxiacloud.com 기반 올바른 엔드포인트들
-        urls = [
-            "https://platform.luxiacloud.com/v1/chat/completions",  # OpenAI 호환 표준
-            "https://platform.luxiacloud.com/api/v1/chat/completions",
-            "https://api.luxiacloud.com/v1/chat/completions",
-            "https://platform.luxiacloud.com/v1/completions",     # 대체 엔드포인트
-        ]
+        # 공식 Luxia API 엔드포인트
+        url = "https://bridge.luxiacloud.com/luxia/v1/chat"
         
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {LUXIA_API_KEY}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "apikey": LUXIA_API_KEY,  # 'Authorization: Bearer' 대신 'apikey' 사용
+            "Content-Type": "application/json"
         }
         
         # 컨텍스트와 질문을 결합
@@ -344,98 +338,76 @@ def get_luxia_response(prompt: str, context: str = "") -> str:
         else:
             full_prompt = prompt
 
-        # OpenAI 호환 형식 (가장 표준적)
-        chat_payload = {
-            "model": "gpt-3.5-turbo",  # 또는 luxia 모델명
+        # Luxia 공식 API 형식
+        payload = {
+            "model": "luxia2.5-llm-32b-0401",  # 공식 모델명
             "messages": [
-                {"role": "user", "content": full_prompt}
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.7
+                {
+                    "role": "user",
+                    "content": full_prompt
+                }
+            ]
         }
         
-        # 각 엔드포인트 시도
-        for url_idx, url in enumerate(urls):
-            try:
-                st.info(f"연결 시도 {url_idx+1}: {url}")
-                
-                response = requests.post(
-                    url, 
-                    json=chat_payload, 
-                    headers=headers, 
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    # OpenAI 표준 응답 처리
-                    if 'choices' in result and len(result['choices']) > 0:
-                        message_content = result['choices'][0].get('message', {}).get('content', '')
-                        if message_content:
-                            st.success(f"✅ API 연결 성공: {url}")
-                            return message_content
-                    
-                    # 다른 형식의 응답 처리
-                    elif 'message' in result:
-                        st.success(f"✅ API 연결 성공: {url}")
-                        return result['message']
-                    
-                    elif 'response' in result:
-                        st.success(f"✅ API 연결 성공: {url}")
-                        return result['response']
-                    
-                    elif 'text' in result:
-                        st.success(f"✅ API 연결 성공: {url}")
-                        return result['text']
-                    
-                    else:
-                        st.warning(f"예상치 못한 응답 형식: {result}")
-                        continue
-                
-                elif response.status_code == 401:
-                    st.error(f"🔑 인증 실패 ({url}): API 키를 확인해주세요")
-                    continue
-                    
-                elif response.status_code == 404:
-                    st.warning(f"⚠️ 엔드포인트 없음 ({url})")
-                    continue
-                    
-                elif response.status_code == 429:
-                    st.warning(f"⏰ 사용 한도 초과 ({url})")
-                    continue
-                    
-                else:
-                    st.warning(f"HTTP {response.status_code} ({url}): {response.text[:200]}")
-                    continue
-                    
-            except requests.exceptions.ConnectionError:
-                st.warning(f"🔌 연결 실패: {url}")
-                continue
-            except requests.exceptions.Timeout:
-                st.warning(f"⏰ 시간 초과: {url}")
-                continue
-            except Exception as e:
-                st.warning(f"❌ 오류 ({url}): {str(e)}")
-                continue
+        st.info("🚀 Luxia API 연결 중...")
         
-        # 모든 엔드포인트 실패시
-        return """❌ **Luxia API 연결 실패**
-
-**시도한 엔드포인트**:
-- platform.luxiacloud.com/v1/chat/completions
-- platform.luxiacloud.com/api/v1/chat/completions  
-- api.luxiacloud.com/v1/chat/completions
-
-**해결 방안**:
-1. **API 키 확인**: platform.luxiacloud.com 대시보드에서 키 상태 확인
-2. **서비스 상태**: Luxia 플랫폼 서비스 상태 확인
-3. **문서 확인**: platform.luxiacloud.com/docs 에서 정확한 엔드포인트 확인
-
-**현재 상태**: 문서 검색 기능은 정상 작동 중입니다."""
+        response = requests.post(
+            url, 
+            json=payload, 
+            headers=headers, 
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
             
+            # Luxia API 응답 처리
+            if 'choices' in result and len(result['choices']) > 0:
+                message_content = result['choices'][0].get('message', {}).get('content', '')
+                if message_content:
+                    st.success("✅ Luxia API 연결 성공!")
+                    return message_content
+            
+            # 대체 응답 형식 처리
+            elif 'message' in result:
+                st.success("✅ Luxia API 연결 성공!")
+                return result['message']
+            
+            elif 'response' in result:
+                st.success("✅ Luxia API 연결 성공!")
+                return result['response']
+            
+            else:
+                st.error(f"예상치 못한 응답 형식: {result}")
+                return "API 응답 형식을 인식할 수 없습니다."
+        
+        elif response.status_code == 401:
+            st.error("🔑 API 키 인증 실패 - platform.luxiacloud.com에서 키를 확인해주세요")
+            return "API 키 인증에 실패했습니다. 대시보드에서 API 키 상태를 확인해주세요."
+            
+        elif response.status_code == 429:
+            st.warning("⏰ API 사용 한도 초과 - 잠시 후 다시 시도해주세요")
+            return "API 사용 한도에 도달했습니다. 잠시 후 다시 시도해주세요."
+            
+        elif response.status_code == 400:
+            st.error(f"❌ 요청 오류 (400): {response.text}")
+            return "요청 형식에 오류가 있습니다. 관리자에게 문의하세요."
+            
+        else:
+            st.error(f"❌ API 오류 ({response.status_code}): {response.text}")
+            return f"API 오류가 발생했습니다. 상태 코드: {response.status_code}"
+            
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 네트워크 연결 오류 - 인터넷 연결을 확인해주세요")
+        return "네트워크 연결에 문제가 있습니다. 인터넷 연결을 확인해주세요."
+        
+    except requests.exceptions.Timeout:
+        st.warning("⏰ 응답 시간 초과 - 다시 시도해주세요")
+        return "응답 시간이 초과되었습니다. 다시 시도해주세요."
+        
     except Exception as e:
-        return f"시스템 오류: {str(e)}"
+        st.error(f"❌ 시스템 오류: {str(e)}")
+        return f"예상치 못한 오류가 발생했습니다: {str(e)}"
 
 # 세션 상태 초기화
 if 'messages' not in st.session_state:
@@ -790,18 +762,7 @@ with st.sidebar:
     
     # API 키 정보 표시 (읽기 전용)
     st.markdown("### 🔑 AI Model")
-    
-    # 연결 상태 체크
-    try:
-        # Luxia 플랫폼 연결 테스트
-        test_response = requests.get("https://platform.luxiacloud.com", timeout=5)
-        if test_response.status_code == 200:
-            st.success("🚀 **Luxia Platform** 연결 확인됨")
-        else:
-            st.warning("🔄 **Luxia Platform** 상태 확인 중...")
-    except:
-        st.error("🔴 **네트워크 연결 불안정**")
-        st.info("제한된 서비스 제공 중")
+    st.success("🚀 **Luxia Platform** 연결 준비됨")
     
     st.markdown("---")
     
