@@ -398,38 +398,110 @@ def process_documents(files):
     
     return documents
 
+def fallback_keyword_search(query, documents, n_results=3):
+    """임베딩 실패시 키워드 검색으로 폴백"""
+    try:
+        if not documents:
+            return []
+        
+        query_lower = query.lower()
+        scored_docs = []
+        
+        for doc in documents:
+            text_lower = doc['text'].lower()
+            score = 0
+            
+            # 키워드 매칭 점수 계산
+            query_words = query_lower.split()
+            for word in query_words:
+                if len(word) > 1:  # 한 글자 단어 제외
+                    score += text_lower.count(word)
+            
+            if score > 0:
+                scored_docs.append((doc['text'], score))
+        
+        # 점수별 정렬
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        
+        # 상위 결과 반환
+        results = [doc[0] for doc in scored_docs[:n_results]]
+        
+        if results:
+            st.info("키워드 검색으로 대체하여 결과를 찾았습니다.")
+        
+        return results
+    
+    except Exception as e:
+        st.error(f"폴백 검색 오류: {e}")
+        return []
+
 @st.cache_resource
 def load_sentence_transformer():
-    """SentenceTransformer 모델 로드"""
+    """SentenceTransformer 모델 로드 - 오류 처리 강화"""
     try:
-        return SentenceTransformer('all-MiniLM-L6-v2')
+        st.info("SentenceTransformer 모델을 로딩하고 있습니다...")
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # 모델이 제대로 로드되었는지 테스트
+        test_encoding = model.encode(["test"])
+        if test_encoding is not None and len(test_encoding) > 0:
+            st.success("✅ SentenceTransformer 모델 로드 성공!")
+            return model
+        else:
+            raise Exception("모델 테스트 인코딩 실패")
+            
     except Exception as e:
-        st.error(f"SentenceTransformer loading error: {e}")
+        st.error(f"SentenceTransformer 로딩 실패: {e}")
+        st.warning("⚠️ 임베딩 검색이 비활성화됩니다. 키워드 검색으로 대체됩니다.")
         return None
 
 def create_embeddings(documents):
-    """문서 임베딩 생성"""
+    """문서 임베딩 생성 - 안전성 강화"""
     if not documents:
-        return None
+        st.warning("처리할 문서가 없습니다.")
+        return None, None
     
     try:
+        st.info("임베딩 모델을 로드하고 있습니다...")
         encoder = load_sentence_transformer()
-        if encoder is None:
-            return None
         
+        if encoder is None:
+            st.warning("임베딩 모델 로드에 실패했습니다. 키워드 검색으로 대체됩니다.")
+            return None, None
+        
+        st.info(f"{len(documents)}개 문서의 임베딩을 생성하고 있습니다...")
         texts = [doc['text'] for doc in documents]
-        embeddings = encoder.encode(texts)
+        
+        # 배치 단위로 처리하여 메모리 절약
+        batch_size = 32
+        all_embeddings = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i+batch_size]
+            batch_embeddings = encoder.encode(batch_texts, show_progress_bar=False)
+            all_embeddings.extend(batch_embeddings)
+        
+        embeddings = np.array(all_embeddings)
+        st.success(f"✅ {len(embeddings)}개 문서 임베딩 생성 완료!")
         
         return embeddings, encoder
     
     except Exception as e:
-        st.error(f"Embedding generation error: {e}")
+        st.error(f"임베딩 생성 오류: {e}")
+        st.warning("키워드 검색으로 대체됩니다.")
         return None, None
 
 def search_documents(query, documents, embeddings, encoder, n_results=3):
     """문서에서 관련 내용 검색"""
     try:
+        # None 체크 강화
         if not documents or embeddings is None or encoder is None:
+            st.warning("검색 시스템이 초기화되지 않았습니다. 문서를 다시 처리해주세요.")
+            return []
+        
+        # encoder가 제대로 로드되었는지 확인
+        if not hasattr(encoder, 'encode'):
+            st.error("SentenceTransformer 모델이 제대로 로드되지 않았습니다.")
             return []
         
         query_embedding = encoder.encode([query])
@@ -445,7 +517,8 @@ def search_documents(query, documents, embeddings, encoder, n_results=3):
     
     except Exception as e:
         st.error(f"Document search error: {e}")
-        return []
+        # 폴백: 키워드 검색으로 대체
+        return fallback_keyword_search(query, documents, n_results)
 
 def load_default_document():
     """GitHub에서 기본 문서 로드 (password-rag-agent2 경로 사용)"""
@@ -637,9 +710,11 @@ with st.sidebar:
         
         # 검색 기능 상태
         if st.session_state.get('embeddings') is not None:
-            st.success("Search: Active")
+            st.success("🔍 Vector Search: Active")
+        elif st.session_state.get('documents'):
+            st.info("🔤 Keyword Search: Active")
         else:
-            st.warning("Search: Inactive")
+            st.warning("❌ Search: Inactive")
     else:
         st.info("No documents loaded")
     
